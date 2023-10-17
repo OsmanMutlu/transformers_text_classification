@@ -35,12 +35,13 @@ tokenizer = AutoTokenizer.from_pretrained(pretrained_transformers_model)
 config = AutoConfig.from_pretrained(pretrained_transformers_model)
 has_token_type_ids = config.type_vocab_size > 1
 
-encoder = AutoModel.from_pretrained(pretrained_transformers_model)
-encoder.to(device)
-encoder.load_state_dict(torch.load(encoder_path, map_location=device))
-classifier = MLP(encoder.config.hidden_size, encoder.config.hidden_size*4, len(idx_to_label))
-classifier.to(device)
-classifier.load_state_dict(torch.load(classifier_path, map_location=device))
+with torch.no_grad():
+    encoder = AutoModel.from_pretrained(pretrained_transformers_model)
+    encoder.to(device)
+    encoder.load_state_dict(torch.load(encoder_path, map_location=device))
+    classifier = MLP(encoder.config.hidden_size, encoder.config.hidden_size*4, len(idx_to_label))
+    classifier.to(device)
+    classifier.load_state_dict(torch.load(classifier_path, map_location=device))
 
 encoder = torch.nn.DataParallel(encoder)
 encoder.eval()
@@ -49,14 +50,17 @@ classifier.eval()
 def model_predict(batch):
     if has_token_type_ids:
         input_ids, input_mask, token_type_ids = tuple(t.to(device) for t in batch.values())
-        embeddings = encoder(input_ids, attention_mask=input_mask, token_type_ids=token_type_ids)[1]
+        with torch.no_grad():
+            embeddings = encoder(input_ids, attention_mask=input_mask, token_type_ids=token_type_ids)[1]
     else:
         input_ids, input_mask = tuple(t.to(device) for t in batch.values())
-        embeddings = encoder(input_ids, attention_mask=input_mask)[1]
+        with torch.no_grad():
+            embeddings = encoder(input_ids, attention_mask=input_mask)[1]
 
-    out = classifier(embeddings)
+    with torch.no_grad():
+        out = classifier(embeddings)
 
-    all_preds = torch.sigmoid(out).detach().cpu().numpy().tolist()
+    all_preds = torch.sigmoid(out).cpu().numpy().tolist()
     if return_probabilities:
         all_preds = [[round(float(x), 4) for x in preds] for preds in all_preds]
     else:
